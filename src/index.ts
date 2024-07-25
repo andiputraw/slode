@@ -1,9 +1,8 @@
 /**
  * TODO:
  *
- * Hapus service workser, gunakan URL.createObjectURL().
- *
- *
+ * Jangan lakukan perubahan pada symbol yang di definisikan di global.css
+ * Selesaikan ${Extractor.extractCssSymbol}
  */
 
 const presentation = document.getElementById("presentation");
@@ -17,19 +16,75 @@ interface SlideJs {
 
 interface SlideData {
   html: string;
-  css: string;
+  css: string[];
   js: SlideJs;
 }
 
-class Extractor {
-  constructor(private src: string) {}
+interface GlobalSymbol {
+  ids: string[];
+  classes: string[];
+}
 
-  extractHtmlContent(): string | null {
-    return this.src.match(/<Fragment>([\s\S]*?)<\/Fragment>/s)?.[1] ?? null;
+function getRandomString(length = 8) {
+  const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  return result;
+}
+
+class HistoryState {
+  constructor() {}
+  static push(index: number) {
+    window.history.pushState({}, "", `/?page=${index}`);
+  }
+}
+
+class Extractor {
+  prefix: string;
+  constructor(private src: string, private symbols: GlobalSymbol) {
+    this.prefix = getRandomString(6);
   }
 
-  extractStyleContent(): string | null {
-    return this.src.match(/<style>([\s\S]*?)<\/style>/s)?.[1] ?? null;
+  static extractCssSymbol(src: string): GlobalSymbol {
+    const ids = src.match(/#([a-zA-Z0-9_-]+)/g);
+    const classes = src.match(/\.([a-zA-Z0-9_-]+)/g);
+
+    // let cssid = Array.from(ids);
+    // let cssclass = Array.from(classes);
+    console.log(ids, classes);
+    return {
+      classes: [],
+      ids: [],
+    };
+  }
+
+  extractHtmlContent(): string | null {
+    return (
+      this.src
+        .match(/<Fragment>([\s\S]*?)<\/Fragment>/s)?.[1]
+        .replace(/\b(id|class)="([^"]+)"/g, (_, attr, value) => {
+          const newValue = (value as string)
+            .split(" ")
+            .map((v) => `${this.prefix}-${v}`)
+            .join(" ");
+
+          return `${attr}="${newValue}"`;
+        }) ?? null
+    );
+  }
+
+  extractStyleContent(): string[] | null {
+    const style =
+      this.src
+        .match(/<style>([\s\S]*?)<\/style>/s)?.[1]
+        .replace(/(#|\.)([a-zA-Z0-9_-]+)/g, (_, symbol, name) => {
+          return `${symbol}${this.prefix}-${name}`;
+        }) ?? "";
+
+    if (style === "") return null;
+    return style.split("}").map((v) => v + "}") ?? null;
   }
 
   extractJsContent(): string | null {
@@ -37,32 +92,90 @@ class Extractor {
   }
 }
 
+class SlideResource {
+  maxSlide: number | null;
+  symbols: GlobalSymbol | null;
+  constructor() {
+    this.symbols = null;
+    this.maxSlide = null;
+  }
+  async getSlide(slide: number): Promise<SlideData | null> {
+    // If we know the max slide. Diretly return null
+    if (this.maxSlide && slide > this.maxSlide) return null;
+    /* TODO: any error will return null, for example, network disconnected, but there may still be a slide
+      Handle other error
+    */
+    const src = await fetch(`/slides/${slide}.html`)
+      .then((res) => {
+        if (res.status == 404) return null;
+        return res.text();
+      })
+      .catch(() => null);
+
+    // Set max slide if we dont found the slide
+    if (!src) {
+      this.maxSlide = slide - 1;
+      return null;
+    }
+
+    if (!this.symbols) {
+      const global =
+        (await fetch("/slides/global.css").then((res) => res.text())) || "";
+      this.symbols = Extractor.extractCssSymbol(global);
+    }
+
+    const extractor = new Extractor(src, this.symbols);
+    const jsBlob = new Blob([extractor.extractJsContent() ?? ""], {
+      type: "text/javascript",
+    });
+    const jsUrl = URL.createObjectURL(jsBlob);
+    return {
+      html: extractor.extractHtmlContent() ?? "",
+      css: extractor.extractStyleContent() ?? [],
+      js: (await import(jsUrl)) as SlideJs,
+    };
+  }
+}
+
 class Slode extends EventTarget {
   slideIndex: number;
-  constructor(public dom: HTMLElement, public slideData: SlideData) {
+  private constructor(
+    public dom: HTMLElement,
+    public slideData: SlideData,
+    public SlideResource: SlideResource
+  ) {
     super();
     this.slideIndex = getSlideNumber();
   }
 
   static async init(dom: HTMLElement) {
-    const slideData = await getSlide(getSlideNumber());
-    return new Slode(dom, slideData);
+    const resource = new SlideResource();
+    let slideData = await resource.getSlide(getSlideNumber());
+    if (!slideData) {
+      slideData = await resource.getSlide(1);
+      HistoryState.push(1);
+      if (!slideData) throw new Error("Slide not found");
+    }
+    return new Slode(dom, slideData, resource);
   }
 
   show() {
     this.dom.innerHTML = this.slideData.html;
-    stylesheet.insertRule(this.slideData.css, stylesheet.cssRules.length);
+    for (const rule of this.slideData.css) {
+      console.log(rule);
+      stylesheet.insertRule(rule, stylesheet.cssRules.length);
+    }
     this.slideData.js.main();
   }
   setSlideIndex(index: number) {
     this.slideIndex = index;
-    const url = new URL(window.location.href);
-    url.searchParams.set("page", index.toString());
-    window.history.pushState({}, "", url);
+    HistoryState.push(index);
   }
   async next() {
     try {
-      this.slideData = await getSlide(this.slideIndex + 1);
+      const slideData = await this.SlideResource.getSlide(this.slideIndex + 1);
+      if (!slideData) return;
+      this.slideData = slideData;
     } catch {
       return;
     }
@@ -73,7 +186,9 @@ class Slode extends EventTarget {
   async prev() {
     if (this.slideIndex <= 1) return;
     try {
-      this.slideData = await getSlide(this.slideIndex - 1);
+      const slideData = await this.SlideResource.getSlide(this.slideIndex - 1);
+      if (!slideData) return;
+      this.slideData = slideData;
     } catch {
       return;
     }
@@ -81,21 +196,6 @@ class Slode extends EventTarget {
 
     this.show();
   }
-}
-
-async function getSlide(slide: number): Promise<SlideData> {
-  await fetch(`/slides/${slide}.html`);
-  const src = await fetch(`/slides/${slide}.html`).then((res) => res.text());
-  const extractor = new Extractor(src);
-
-  const js_url = URL.createObjectURL(
-    new Blob([extractor.extractJsContent() ?? ""])
-  );
-  return {
-    html: extractor.extractHtmlContent() ?? "",
-    css: extractor.extractStyleContent() ?? "",
-    js: (await import(js_url)) as SlideJs,
-  };
 }
 
 function getSlideNumber() {

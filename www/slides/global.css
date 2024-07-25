@@ -1,0 +1,19 @@
+#text {
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(8, 255, 123);
+}
+
+#input {
+  text-align: center;
+}
+
+.blue {
+  color: blue;
+}
+
+.red {
+  color: red;
+}
