@@ -1,0 +1,15 @@
+{
+  "name": "slode",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "build:watch": "bun build src/index.ts --outdir=www --external /slides/*.js --watch",
+    "serve": "http-server -c-1 www"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

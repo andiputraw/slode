@@ -1,0 +1,23 @@
+<script>
+  export function main() {
+    /** @type {HTMLParagraphElement} */
+    const text = document.getElementById("text");
+    text.innerHTML = "Slide 1 Ehe";
+  }
+</script>
+
+<Fragment>
+  <div class="center">
+    <p id="text" class="red blue" data-bind="text">Slide 1</p>
+  </div>
+</Fragment>
+
+<style>
+  #text {
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+  }
+</style>
